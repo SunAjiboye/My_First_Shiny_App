@@ -1,0 +1,191 @@
+---
+title: "Online_Retail"
+author: "Sun Ajiboye"
+date: "`r Sys.Date()`"
+output: ioslides_presentation
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(shiny)
+library(bslib)
+library(ggplot2)
+library(dplyr)
+library(thematic)
+
+# Enable thematic for consistent plot theming
+thematic::thematic_shiny(font = "auto")
+
+# Define custom theme with Bootswatch "darkly"
+custom_theme <- bs_theme(
+  version = 5,
+  bootswatch = "darkly",
+  primary = "#2c3e50",
+  secondary = "#3498db",
+  base_font = font_google("Inter"),
+  heading_font = font_google("Roboto"),
+  "font-size-base" = "1rem"
+)
+```
+
+```{r}
+# Load dataset (replace URL with your dataset if needed)
+online_retail <- read_excel("~/student/online_retail.xlsx")
+
+# Preprocess data
+retail_data <- online_retail %>%
+  rename(
+    UnitPrice = Price,      # Rename Price to UnitPrice
+    InvoiceNo = Invoice     # Rename Invoice to InvoiceNo
+  ) %>%
+  mutate(
+    InvoiceDate = as.Date(substr(InvoiceDate, 1, 10), format = "%Y-%m-%d"), # Extract only the date
+    TotalPrice = Quantity * UnitPrice  # Compute total price
+  ) %>%
+  filter(Quantity > 0, UnitPrice > 0)  # Remove negative quantities and prices
+
+head(retail_data) # View first few rows
+
+```
+
+```{r}
+ui <- page_sidebar(
+  title = "Online Retail Dashboard",
+  theme = custom_theme,
+  sidebar = sidebar(
+    title = "Controls",
+    selectInput(
+      inputId = "x_var",
+      label = "X-Axis Variable",
+      choices = c("Quantity" = "Quantity", "UnitPrice" = "UnitPrice", "TotalPrice" = "TotalPrice"),
+      selected = "Quantity"
+    ),
+    selectInput(
+      inputId = "y_var",
+      label = "Y-Axis Variable",
+      choices = c("UnitPrice" = "UnitPrice", "Quantity" = "Quantity", "TotalPrice" = "TotalPrice"),
+      selected = "UnitPrice"
+    ),
+    selectInput(
+      inputId = "color_var",
+      label = "Color By",
+      choices = c("Country" = "Country", "Description" = "Description"),
+      selected = "Country"
+    ),
+    sliderInput(
+      inputId = "point_size",
+      label = "Point Size",
+      min = 1,
+      max = 5,
+      value = 2,
+      step = 0.5
+    ),
+    selectInput(
+      inputId = "country_filter",
+      label = "Filter by Country",
+      choices = c("All", unique(retail_data$Country)),
+      selected = "All",
+      multiple = TRUE
+    )
+  ),
+  # Main content with cards and value boxes
+  layout_columns(
+    col_widths = c(4, 4, 4),
+    value_box(
+      title = "Total Sales (£)",
+      value = textOutput("total_sales"),
+      showcase = icon("sterling-sign"),
+      theme = "primary"
+    ),
+    value_box(
+      title = "Average Order Value (£)",
+      value = textOutput("avg_order_value"),
+      showcase = icon("cart-shopping"),
+      theme = "secondary"
+    ),
+    value_box(
+      title = "Unique Customers",
+      value = textOutput("unique_customers"),
+      showcase = icon("users"),
+      theme = "success"
+    )
+  ),
+  card(
+    full_screen = TRUE,
+    card_header("Interactive Scatter Plot"),
+    card_body(
+      plotOutput("scatter_plot")
+    )
+  )
+)
+```
+
+
+```{r}
+server <- function(input, output, session) {
+  # Reactive data with country filter
+  data <- reactive({
+    df <- retail_data
+    if (!"All" %in% input$country_filter && length(input$country_filter) > 0) {
+      df <- df %>% filter(Country %in% input$country_filter)
+    }
+    # Limit to top 1000 rows for performance in scatter plot
+    df %>% slice_head(n = 1000)
+  })
+
+  # Value box outputs
+  output$total_sales <- renderText({
+    format(round(sum(data()$TotalPrice, na.rm = TRUE), 2), big.mark = ",")
+  })
+
+  output$avg_order_value <- renderText({
+    avg <- data() %>%
+      group_by(InvoiceNo) %>%
+      summarise(OrderTotal = sum(TotalPrice, na.rm = TRUE)) %>%
+      summarise(AvgOrder = mean(OrderTotal, na.rm = TRUE)) %>%
+      pull(AvgOrder)
+    format(round(avg, 2), big.mark = ",")
+  })
+
+  output$unique_customers <- renderText({
+    length(unique(data()$CustomerID))
+  })
+
+  # Scatter plot
+  output$scatter_plot <- renderPlot({
+    # Handle Description as color variable by taking top 10 products for clarity
+    if (input$color_var == "Description") {
+      top_products <- data() %>%
+        count(Description, sort = TRUE) %>%
+        slice_head(n = 10) %>%
+        pull(Description)
+      plot_data <- data() %>% filter(Description %in% top_products)
+    } else {
+      plot_data <- data()
+    }
+
+    ggplot(plot_data, aes_string(x = input$x_var, y = input$y_var, color = input$color_var)) +
+      geom_point(size = input$point_size) +
+      theme_minimal() +
+      labs(
+        x = input$x_var,
+        y = input$y_var,
+        color = input$color_var
+      ) +
+      # Log scale for UnitPrice and TotalPrice to handle skewed distributions
+      scale_x_continuous(trans = if (input$x_var %in% c("UnitPrice", "TotalPrice")) "log10" else "identity") +
+      scale_y_continuous(trans = if (input$y_var %in% c("UnitPrice", "TotalPrice")) "log10" else "identity")
+  })
+}
+```
+
+
+```{r}
+shinyApp(ui, server)
+```
+
+## Shiny Presentation
+
+
+
